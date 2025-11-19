@@ -119,3 +119,10 @@ GROUP BY c.id
 HAVING total_spent > 500
 ORDER BY total_spent DESC;
 ```
+
+---
+
+## 4. De-normalization
+
+We can de-normalize the order table by adding the concatenated customer first_name and last_name to the order table,
+to avoid joining on each reporting query to retrieve customer name.
