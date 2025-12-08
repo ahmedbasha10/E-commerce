@@ -96,14 +96,14 @@ WHERE orders.order_date BETWEEN "2024-11-10 00:00:00" AND "2024-11-10 23:59:59";
 ### 3.2 Top 3 Selling Products For a Month
 
 ```sql
-SELECT od.product_id, p.name, SUM(od.quantity) as total_quantity
+SELECT od.product_id, p.name, SUM(od.quantity*od.unit_price) as total_revenue
 FROM order_details od INNER JOIN product p
 ON od.product_id = p.id
 INNER JOIN orders o
 ON od.order_id = o.id
 WHERE o.order_date >= '2025-03-01' AND o.order_date < '2025-04-01'
 GROUP BY od.product_id
-ORDER BY total_quantity DESC
+ORDER BY total_revenue DESC
 LIMIT 3;
 ```
 
