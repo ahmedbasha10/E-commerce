@@ -120,6 +120,39 @@ HAVING total_spent > 500
 ORDER BY total_spent DESC;
 ```
 
+### 3.4 Search for all products with the word "camera" in either the product name or description
+
+```sql
+SELECT p.name, p.description, p.price, c.name as category
+FROM product p INNER JOIN category c
+ON p.category_id = c.id 
+WHERE p.name like '%camera%' or description like '%camera%';
+```
+
+### 3.5  design a query to suggest popular products in the same category for the same author, excluding the Purchased product from the recommendations
+
+```SQL
+SELECT p2.id, p2.name, COALESCE(SUM(od2.quantity), 0) As popularity
+FROM (
+	SELECT DISTINCT p.category_id
+    FROM orders o
+    INNER JOIN order_details od ON o.id = od.order_id
+    INNER JOIN product p ON p.id = od.product_id
+    WHERE o.customer_id = 1
+) AS customer_categories
+INNER JOIN product p2 ON p2.category_id = customer_categories.category_id
+LEFT JOIN order_details od2 ON od2.product_id = p2.id
+WHERE p2.id NOT IN (
+	SELECT DISTINCT od.product_id
+    FROM orders o
+    INNER JOIN order_details od ON o.id = od.order_id
+    WHERE o.customer_id = 1
+)
+GROUP BY p2.id
+ORDER BY popularity DESC
+LIMIT 10;
+```
+
 ---
 
 ## 4. De-normalization
