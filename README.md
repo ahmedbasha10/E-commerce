@@ -153,6 +153,36 @@ ORDER BY popularity DESC
 LIMIT 10;
 ```
 
+### 3.6 Create a trigger to create a sale history
+```sql
+DELIMITER $$
+CREATE TRIGGER sale_history_trigger
+AFTER INSERT
+ON order_details
+FOR EACH ROW
+BEGIN
+	INSERT INTO sale_history (customer_id, product_id, total_amount, quantity, order_date)
+    SELECT customer_id, product_id, total_amount, quantity, order_date 
+    FROM orders o INNER JOIN order_details od
+    ON o.id = od.order_id
+    WHERE od.order_id = New.order_id;
+END$$
+DELIMITER ;
+```
+
+### 3.7 Transaction query to lock the field quantity with product id = 211 from being updated
+```sql
+BEGIN;
+SELECT id FROM product WHERE id=211 FOR UPDATE;
+COMMIT;
+```
+
+### 3.8 Transaction query to lock row with product id = 211 from being updated
+```sql
+BEGIN;
+SELECT * FROM product WHERE id=211 FOR UPDATE;
+COMMIT;
+```
 ---
 
 ## 4. De-normalization
