@@ -214,6 +214,7 @@ EXPLAIN ANALYZE SELECT name FROM userinfo WHERE name = 'John Brown';
 run the query 10 times and calculate QPS:
 
 **Total Time: 43 seconds**
+
 **QPS: 0.23**
 
 ---
@@ -238,6 +239,7 @@ We have 250000 rows matching the criteria.
 run the query 10 times and calculate QPS:
 
 **Total Time: 15 seconds**
+
 **QPS: 0.66**
 
 ---
@@ -277,6 +279,7 @@ It then uses the Intersect operator to merge the results.
 #### 5.3.2 Benchmark with Individual Indexes
 
 **Total Time: 1.3 seconds**
+
 **QPS: 7.8**
 
 #### 5.3.3 Analyze Query Plan with Composite Indexes
@@ -293,6 +296,7 @@ resulting in a lower cost and faster execution time.
 running the query 10 times:
 
 **Total Time: 0.12 seconds**
+
 **QPS: 83**
 
 
