@@ -189,3 +189,130 @@ COMMIT;
 
 We can de-normalize the order table by adding the concatenated customer first_name and last_name to the order table,
 to avoid joining on each reporting query to retrieve customer name.
+
+---
+
+## 5. SQL Optimizations
+
+### 5.1 Execution without performance enhancements
+
+Query:
+
+```sql
+EXPLAIN ANALYZE SELECT name FROM userinfo WHERE name = 'John Brown';
+```
+
+#### 5.1.1 Analyze Query Plan
+
+```text
+-> Filter: (userinfo.`name` = 'John Brown')  (cost=1.06e+6 rows=993273) (actual time=8.33..4216 rows=250000 loops=1)
+     -> Table scan on userinfo  (cost=1.06e+6 rows=9.93e+6) (actual time=8.32..3636 rows=10e+6 loops=1)
+```
+
+#### 5.1.2 Query Benchmark
+
+run the query 10 times and calculate QPS:
+
+**Total Time: 43 seconds**
+**QPS: 0.23**
+
+---
+
+### 5.2 Execution with adding an individual index on name column
+
+Query:
+```sql
+EXPLAIN ANALYZE SELECT name FROM userinfo WHERE name = 'John Brown';
+```
+
+#### 5.2.1 Analyze Query Plan
+
+We have 250000 rows matching the criteria.
+
+```text
+-> Covering index lookup on userinfo using name_idx (name='John Brown')  (cost=63232 rows=481760) (actual time=0.0789..118 rows=250000 loops=1)
+```
+
+#### 5.2.2 Query Benchmark
+
+run the query 10 times and calculate QPS:
+
+**Total Time: 15 seconds**
+**QPS: 0.66**
+
+---
+
+### 5.3 Composite Index vs Individual Indexes
+
+If we are executing a query that has multiple conditions, if we created individual indexes, it will execute both indexes
+separately and then merge the results, which is less efficient than using a composite index.
+
+Query:
+```sql
+EXPLAIN ANALYZE SELECT COUNT(*) FROM userinfo WHERE name = 'John Brown' AND state_id = 1;
+```
+
+#### 5.3.1 Analyze Query Plan without Indexes
+With this approach, the database engine performs a full table scan, resulting in a higher cost and longer execution time.
+It filters the rows based on both conditions after scanning the entire table.
+
+```text
+-> Aggregate: count(0)  (cost=1.1e+6 rows=1) (actual time=4194..4194 rows=1 loops=1)
+    -> Filter: ((userinfo.state_id = 1) and (userinfo.`name` = 'John Brown'))  (cost=1.07e+6 rows=99183) (actual time=0.944..4189 rows=50000 loops=1)
+        -> Table scan on userinfo  (cost=1.07e+6 rows=9.92e+6) (actual time=0.933..3786 rows=10e+6 loops=1)
+```
+
+#### 5.3.1 Analyze Query Plan with Individual Indexes on `name` and `state_id`
+With this approach, the database engine uses both individual indexes to filter rows based on each condition separately.
+It then uses the Intersect operator to merge the results.
+
+```text
+-> Aggregate: count(0)  (cost=21985 rows=1) (actual time=393..393 rows=1 loops=1)
+    -> Filter: ((userinfo.state_id = 1) and (userinfo.`name` = 'John Brown'))  (cost=17430 rows=19765) (actual time=2.06..392 rows=50000 loops=1)
+        -> Intersect rows sorted by row ID  (cost=17430 rows=19765) (actual time=2.06..384 rows=50000 loops=1)
+            -> Index range scan on userinfo using state_idx over (state_id = 1)  (cost=978e-6..398 rows=406922) (actual time=0.0295..135 rows=200000 loops=1)
+            -> Index range scan on userinfo using name_idx over (name = 'John Brown')  (cost=0.0313..15056 rows=481760) (actual time=2.02..234 rows=250000 loops=1)
+```
+
+#### 5.3.2 Benchmark with Individual Indexes
+
+**Total Time: 1.3 seconds**
+**QPS: 7.8**
+
+#### 5.3.3 Analyze Query Plan with Composite Indexes
+Using a composite index on `(name, state_id)`, the database engine can efficiently filter rows based on both conditions simultaneously,
+resulting in a lower cost and faster execution time.
+
+```text
+-> Aggregate: count(0)  (cost=37058 rows=1) (actual time=24.5..24.5 rows=1 loops=1)
+    -> Covering index lookup on userinfo using name_state_idx (name='John Brown', state_id=1)  (cost=13515 rows=102178) (actual time=0.0467..23.2 rows=50000 loops=1)
+```
+
+#### 5.3.4 Benchmark with Composite Indexes
+
+running the query 10 times:
+
+**Total Time: 0.12 seconds**
+**QPS: 83**
+
+
+#### 5.3.5 Composite Index Order
+
+The order of columns in a composite index matters. The most selective column should be placed first.
+Also, the equality conditions should come before range conditions in the index definition for optimal performance, 
+because the range index will not allow the equality index to be used effectively.
+
+
+#### 5.3.6 Redundant Indexes
+
+Sometimes, If we have two queries that are used frequently, one of them works well with a single index, but the other query works with composite index,
+and the single index of the first query is a prefix of the composite index of the second query (redundant).
+
+In this case, we can keep both indexes for faster query time but with a drawback of slower write operations.
+
+---
+
+
+
+
+
