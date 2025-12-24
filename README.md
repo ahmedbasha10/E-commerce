@@ -312,6 +312,33 @@ In this case, we can keep both indexes for faster query time but with a drawback
 
 ---
 
+### 5.4 Choosing the Primary Key
+
+Choosing the correct primary key is very important for performance, as it affects indexing, data retrieval speed, and overall database efficiency.
+
+Incremental surrogate keys are better than random non-sequential (UUID) keys for the following reasons:
+
+- They are easy to generate and maintain.
+- They provide better performance for indexing and querying, as they reduce fragmentation.
+
+Non-sequential keys can lead to more frequent page splits and fragmentation in indexes to find its correct place to be stored,
+which can degrade performance over time.
+
+**Questions:**
+1- Is the auto-increment surrogate key leads to security issues? because it is predictable?
+
+Now, we are going to run tests to compare the performance of auto-increment surrogate keys vs random UUID keys.
+We are going to run 1 million inserts and measure the time taken for each approach.
+
+#### 5.4.1 Surrogate Key With Auto Increment Performance
+
+**Total Test Time: 228.5 seconds**
+
+#### 5.4.2 Random UUID Key Performance
+
+**Total Test Time: 1542.5 seconds**
+
+---
 
 
 
