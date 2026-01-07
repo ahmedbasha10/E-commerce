@@ -344,6 +344,270 @@ We are going to run 1 million inserts and measure the time taken for each approa
 
 ---
 
+## 6. Query Optimizations
+
+### 6.1 Retrieve the total number of products in each category
+
+#### 6.1.1 Original Query
+
+```sql
+SELECT category_name, COUNT(*) AS 'number of products'
+FROM category INNER JOIN product
+ON category.category_id = product.category_id
+GROUP BY category.category_id;
+```
+
+#### 6.1.2 Query Plan Analysis
+
+```text
+-> Group aggregate: count(0)  (cost=1.64e+6 rows=97480) (actual time=3.47..2581 rows=100000 loops=1)
+    -> Nested loop inner join  (cost=533958 rows=4.81e+6) (actual time=3.45..2431 rows=5e+6 loops=1)
+        -> Index scan on category using PRIMARY  (cost=10034 rows=97480) (actual time=1.28..73.9 rows=100000 loops=1)
+        -> Covering index lookup on product using fk_product_category (category_id=category.category_id)  (cost=0.436 rows=49.4) (actual time=0.0183..0.0214 rows=50 loops=100000)
+```
+
+#### 6.1.3 Optimization Technique
+
+MySQL already uses primary and foreign keys to optimize the join operation, 
+but we can optimize by rewriting the query to use subqueries to reduce the number of rows processed in the join.
+
+#### 6.1.4 Rewrite Query
+
+```sql
+SELECT category.category_name, product_categories.number_of_products FROM category INNER JOIN (
+	SELECT category_id, count(*) as 'number_of_products'
+	FROM product
+	GROUP BY product.category_id) product_categories 
+ON category.category_id = product_categories.category_id;
+```
+
+#### 6.1.5 Query Plan Analysis After Optimization
+
+```text
+-> Nested loop inner join  (cost=962e+6 rows=9.61e+9) (actual time=1579..1735 rows=100000 loops=1)
+    -> Covering index scan on category using category_name  (cost=9954 rows=97480) (actual time=0.0389..84.7 rows=100000 loops=1)
+    -> Index lookup on product_categories using <auto_key0> (category_id=category.category_id)  (cost=1.65e+6..1.65e+6 rows=49.9) (actual time=0.0163..0.0164 rows=1 loops=100000)
+        -> Materialize  (cost=1.65e+6..1.65e+6 rows=98549) (actual time=1579..1579 rows=100000 loops=1)
+            -> Group aggregate: count(0)  (cost=1.63e+6 rows=98549) (actual time=0.0296..1498 rows=100000 loops=1)
+                -> Covering index scan on product using fk_product_category  (cost=509684 rows=4.87e+6) (actual time=0.021..1354 rows=5e+6 loops=1)
+
+```
+
+#### 6.1.6 Benchmark Results
+
+| Execution Time Before Optimization | Optimization Technique   | Rewrite Query                   | Execution Time After Optimization |
+|-----------------------------------|--------------------------|---------------------------------|-----------------------------------|
+| 2.5s                              | Reducing number of joins | Create subquery to reduce joins | 1.7s                              |
 
 
+---
 
+### 6.2 Find the top customers by total spending
+
+#### 6.2.1 Original Query
+
+```sql
+SELECT 
+  CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+  o.total_spending
+FROM customer c
+INNER JOIN (
+    SELECT customer_id, SUM(total_amount) AS total_spending
+    FROM orders
+    GROUP BY customer_id
+    ORDER BY total_spending DESC 
+    LIMIT 10
+) o ON o.customer_id = c.customer_id;
+```
+
+#### 6.2.2 Query Plan Analysis
+
+```text
+-> Nested loop inner join  (cost=12.5 rows=0) (actual time=36963..36965 rows=10 loops=1)
+    -> Table scan on o  (cost=2.5..2.5 rows=0) (actual time=36961..36961 rows=10 loops=1)
+        -> Materialize  (cost=0..0 rows=0) (actual time=36961..36961 rows=10 loops=1)
+            -> Limit: 10 row(s)  (actual time=36961..36961 rows=10 loops=1)
+                -> Sort: total_spending DESC, limit input to 10 row(s) per chunk  (actual time=36961..36961 rows=10 loops=1)
+                    -> Stream results  (cost=6.48e+6 rows=5e+6) (actual time=13.2..36404 rows=5e+6 loops=1)
+                        -> Group aggregate: sum(orders.total_amount)  (cost=6.48e+6 rows=5e+6) (actual time=13.2..35834 rows=5e+6 loops=1)
+                            -> Index scan on orders using idx_orders_customer  (cost=1.99e+6 rows=19.5e+6) (actual time=13.2..34237 rows=20e+6 loops=1)
+    -> Single-row index lookup on c using PRIMARY (customer_id=o.customer_id)  (cost=1.01 rows=1) (actual time=0.333..0.333 rows=1 loops=10)
+
+```
+
+#### 6.2.3 Optimization Technique
+
+We can optimize the query by creating a composite index on the `orders` table that includes both `customer_id` and `total_amount`.
+
+#### 6.2.4 Query Plan Analysis After Optimization
+
+```text
+-> Nested loop inner join  (cost=12.5 rows=0) (actual time=8974..8976 rows=10 loops=1)
+    -> Table scan on o  (cost=2.5..2.5 rows=0) (actual time=8965..8965 rows=10 loops=1)
+        -> Materialize  (cost=0..0 rows=0) (actual time=8965..8965 rows=10 loops=1)
+            -> Limit: 10 row(s)  (actual time=8965..8965 rows=10 loops=1)
+                -> Sort: total_spending DESC, limit input to 10 row(s) per chunk  (actual time=8965..8965 rows=10 loops=1)
+                    -> Stream results  (cost=6.48e+6 rows=5e+6) (actual time=0.0401..8428 rows=5e+6 loops=1)
+                        -> Group aggregate: sum(orders.total_amount)  (cost=6.48e+6 rows=5e+6) (actual time=0.0374..7814 rows=5e+6 loops=1)
+                            -> Covering index scan on orders using idx_orders_customer_amount  (cost=1.99e+6 rows=19.5e+6) (actual time=0.0325..6241 rows=20e+6 loops=1)
+    -> Single-row index lookup on c using PRIMARY (customer_id=o.customer_id)  (cost=1.01 rows=1) (actual time=1.08..1.08 rows=1 loops=10)
+
+```
+
+#### 6.2.5 Benchmark Results
+
+| Execution Time Before Optimization | Optimization Technique            | Execution Time After Optimization |
+|-----------------------------------|-----------------------------------|-----------------------------------|
+| 36.9s                             | Composite Index on (customer_id, total_amount) | 8.9s                              |
+
+
+---
+
+### 6.3 Retrieve the most recent orders with customer information with 1000 orders
+
+#### 6.3.1 Original Query
+
+```sql
+SELECT c.customer_id, first_name, last_name, email, order_date  
+FROM customer c INNER JOIN (
+	SELECT o.customer_id, o.order_date 
+    FROM orders o
+	ORDER BY order_date DESC 
+    LIMIT 10
+    ) recent_orders
+ON c.customer_id = recent_orders.customer_id;
+```
+
+#### 6.3.2 Query Plan Analysis
+
+```text
+-> Nested loop inner join  (cost=1.99e+6 rows=10) (actual time=5410..5410 rows=10 loops=1)
+    -> Table scan on recent_orders  (cost=1.99e+6..1.99e+6 rows=10) (actual time=5409..5409 rows=10 loops=1)
+        -> Materialize  (cost=1.99e+6..1.99e+6 rows=10) (actual time=5409..5409 rows=10 loops=1)
+            -> Limit: 10 row(s)  (cost=1.99e+6 rows=10) (actual time=5409..5409 rows=10 loops=1)
+                -> Sort: o.order_date DESC, limit input to 10 row(s) per chunk  (cost=1.99e+6 rows=19.5e+6) (actual time=5409..5409 rows=10 loops=1)
+                    -> Table scan on o  (cost=1.99e+6 rows=19.5e+6) (actual time=8.35..3784 rows=20e+6 loops=1)
+    -> Single-row index lookup on c using PRIMARY (customer_id=recent_orders.customer_id)  (cost=1.01 rows=1) (actual time=0.102..0.102 rows=1 loops=10)
+```
+
+#### 6.3.3 Optimization Technique
+
+We can optimize the query by creating an index on the `order_date` column in the `orders` table.
+
+#### 6.3.4 Query Plan Analysis After Optimization
+
+```text
+-> Nested loop inner join  (cost=1348 rows=1000) (actual time=11.4..15.4 rows=1000 loops=1)
+    -> Table scan on recent_orders  (cost=233..248 rows=1000) (actual time=10.5..10.5 rows=1000 loops=1)
+        -> Materialize  (cost=233..233 rows=1000) (actual time=10.5..10.5 rows=1000 loops=1)
+            -> Limit: 1000 row(s)  (cost=2.43 rows=1000) (actual time=8.43..10.3 rows=1000 loops=1)
+                -> Index scan on o using idx_orders__date (reverse)  (cost=2.43 rows=1000) (actual time=8.43..10.3 rows=1000 loops=1)
+    -> Single-row index lookup on c using PRIMARY (customer_id=recent_orders.customer_id)  (cost=1 rows=1) (actual time=0.00471..0.00474 rows=1 loops=1000)
+```
+
+#### 6.3.5 Benchmark Results
+
+| Execution Time Before Optimization | Optimization Technique            | Execution Time After Optimization |
+|-----------------------------------|-----------------------------------|-----------------------------------|
+| 5.4s                              | Index on order_date               | 0.015s                            |
+
+
+---
+
+### 6.4 List products that have low stock quantities of less than 10 quantities
+
+#### 6.4.1 Original Query
+
+```sql
+SELECT name, stock_quantity
+FROM product
+WHERE stock_quantity < 10;
+```
+
+#### 6.4.2 Query Plan Analysis
+
+```text
+-> Filter: (product.stock_quantity < 10)  (cost=507797 rows=1.62e+6) (actual time=1.17..1452 rows=95000 loops=1)
+    -> Table scan on product  (cost=507797 rows=4.87e+6) (actual time=1.16..1299 rows=5e+6 loops=1)
+```
+
+#### 6.4.3 Optimization Technique
+We can optimize the query by creating a composite index on the `stock_quantity` and `name` columns in the `product` table.
+
+```sql
+CREATE INDEX idx_quantity_name
+ON product (stock_quantity, name);
+```
+
+#### 6.4.4 Query Plan Analysis After Optimization
+
+```text
+-> Filter: (product.stock_quantity < 10)  (cost=43721 rows=194310) (actual time=0.022..47.4 rows=95000 loops=1)
+    -> Covering index range scan on product using idx_quantity over (stock_quantity < 10)  (cost=43721 rows=194310) (actual time=0.0207..42.8 rows=95000 loops=1)
+```
+
+#### 6.4.5 Benchmark Results
+
+| Execution Time Before Optimization | Optimization Technique                  | Execution Time After Optimization |
+|-----------------------------------|-----------------------------------------|-----------------------------------|
+| 1.45s                             | Composite Index on (stock_quantity, name) | 0.048s                            |
+
+---
+
+### 6.5 Calculate the revenue generated from each product category
+
+#### 6.5.1 Original Query
+
+```sql
+SELECT c.category_name, category_revenue.total 
+FROM category c  INNER JOIN (
+	SELECT p.category_id, sum(od.quantity * od.unit_price) total 
+    FROM product p INNER JOIN order_details od 
+    ON p.product_id = od.product_id
+    GROUP BY p.category_id 
+) AS category_revenue  
+ON c.category_id = category_revenue.category_id;
+```
+
+#### 6.5.2 Query Plan Analysis
+
+```text
+-> Nested loop inner join  (cost=11.3e+6 rows=0) (actual time=121466..121623 rows=100000 loops=1)
+    -> Covering index scan on c using category_name  (cost=10036 rows=97480) (actual time=0.0318..81.9 rows=100000 loops=1)
+    -> Index lookup on category_revenue using <auto_key0> (category_id=c.category_id)  (cost=0.25..116 rows=464) (actual time=1.22..1.22 rows=1 loops=100000)
+        -> Materialize  (cost=0..0 rows=0) (actual time=121466..121466 rows=100000 loops=1)
+            -> Table scan on <temporary>  (actual time=121390..121397 rows=100000 loops=1)
+                -> Aggregate using temporary table  (actual time=121390..121390 rows=100000 loops=1)
+                    -> Nested loop inner join  (cost=50.4e+6 rows=45.3e+6) (actual time=8.17..97312 rows=50e+6 loops=1)
+                        -> Table scan on od  (cost=4.64e+6 rows=45.3e+6) (actual time=8.15..12252 rows=50e+6 loops=1)
+                        -> Single-row index lookup on p using PRIMARY (product_id=od.product_id)  (cost=0.911 rows=1) (actual time=0.00156..0.00158 rows=1 loops=50e+6)
+```
+
+#### 6.5.3 Optimization Technique
+
+```sql
+CREATE INDEX idx_product_order_details
+ON order_details (product_id, order_detail_id);
+
+CREATE INDEX idx_order_details_covering
+ON order_details(product_id, quantity, unit_price);
+```
+
+#### 6.5.4 Query Plan Analysis After Optimization
+
+```text
+-> Nested loop inner join  (cost=972e+6 rows=9.61e+9) (actual time=46447..46603 rows=100000 loops=1)
+    -> Covering index scan on c using category_name  (cost=10036 rows=97480) (actual time=8.15..91.9 rows=100000 loops=1)
+    -> Index lookup on category_revenue using <auto_key0> (category_id=c.category_id)  (cost=20.1e+6..20.1e+6 rows=453) (actual time=0.465..0.465 rows=1 loops=100000)
+        -> Materialize  (cost=20.1e+6..20.1e+6 rows=98549) (actual time=46438..46438 rows=100000 loops=1)
+            -> Group aggregate: sum((od.quantity * od.unit_price))  (cost=20.1e+6 rows=98549) (actual time=18.9..46261 rows=100000 loops=1)
+                -> Nested loop inner join  (cost=9.88e+6 rows=44.2e+6) (actual time=1.26..41017 rows=50e+6 loops=1)
+                    -> Covering index scan on p using fk_product_category  (cost=510394 rows=4.87e+6) (actual time=0.988..2295 rows=5e+6 loops=1)
+                    -> Covering index lookup on od using idx_order_details_covering (product_id=p.product_id)  (cost=1.02 rows=9.08) (actual time=0.00626..0.00719 rows=10 loops=5e+6)
+```
+
+#### 6.5.5 Benchmark Results
+
+| Execution Time Before Optimization | Optimization Technique                                    | Execution Time After Optimization |
+|-----------------------------------|-----------------------------------------------------------|-----------------------------------|
+| 121.6s                            | Composite Indexes on order_details (product_id, order_detail_id), (product_id, quantity, unit_price) | 46.6s                             |
